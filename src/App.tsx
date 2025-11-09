@@ -14,6 +14,10 @@ import { ClientProgress } from './components/client/ClientProgress';
 import { ClientActivity } from './components/client/ClientActivity';
 import { BottomNav } from './components/shared/BottomNav';
 import { projectId } from './utils/supabase/info';
+import { PTSettings } from './components/pt/PTSettings';
+import { PTAccountDetails } from './components/pt/PTAccountDetails';
+import { PTExerciseLibrary } from './components/pt/PTExerciseLibrary';
+import { PTExerciseDetail } from './components/pt/PTExerciseDetail';
 
 type Screen =
   | 'login'
@@ -27,7 +31,11 @@ type Screen =
   | 'pt-dashboard'
   | 'pt-routine-builder'
   | 'pt-calendar'
-  | 'pt-activity';
+  | 'pt-activity'
+  | 'pt-settings'
+  | 'pt-settings-details'
+  | 'pt-settings-exercises'
+  | 'pt-settings-exercise-detail';
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>('login');
@@ -36,40 +44,74 @@ export default function App() {
   const [activeRoutine, setActiveRoutine] = useState<any>(null);
   const [editingRoutineId, setEditingRoutineId] = useState<string | null>(null);
   const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
+  const [selectedExerciseId, setSelectedExerciseId] = useState<string | null>(null);
   const [needsOnboarding, setNeedsOnboarding] = useState(false);
 
   useEffect(() => {
-    checkSession();
+    const initialise = async () => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session) {
+          await loadSession(session);
+        }
+      } catch (error) {
+        console.error('Error checking session:', error);
+      }
+    };
+
+    initialise();
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange(async (_event, session) => {
+      if (session?.access_token) {
+        await loadSession(session);
+      } else {
+        setUser(null);
+        setToken('');
+        setScreen('login');
+      }
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
   }, []);
 
-  const checkSession = async () => {
+  const loadSession = async (session: { access_token: string }) => {
+    const accessToken = session.access_token;
+    if (!accessToken) {
+      return;
+    }
+
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-
-      if (session) {
-        const response = await fetch(
-          `https://${projectId}.supabase.co/functions/v1/make-server-d58ce8ef/auth/user`,
-          {
-            headers: {
-              Authorization: `Bearer ${session.access_token}`,
-            },
-          }
-        );
-
-        if (response.ok) {
-          const { user: userData } = await response.json();
-          setUser(userData);
-          setToken(session.access_token);
-          
-          if (userData.role === 'client') {
-            setScreen('client-dashboard');
-          } else if (userData.role === 'pt') {
-            setScreen('pt-dashboard');
-          }
+      const response = await fetch(
+        `https://${projectId}.supabase.co/functions/v1/make-server-d58ce8ef/auth/user`,
+        {
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+          },
         }
+      );
+
+      if (!response.ok) {
+        throw new Error(`Unable to load session (${response.status})`);
+      }
+
+      const { user: userData } = await response.json();
+      setUser(userData);
+      setToken(accessToken);
+
+      if (userData.role === 'client') {
+        setScreen('client-dashboard');
+      } else if (userData.role === 'pt') {
+        setScreen('pt-dashboard');
       }
     } catch (error) {
-      console.error('Error checking session:', error);
+      console.error('Error loading session:', error);
+      setUser(null);
+      setToken('');
+      setScreen('login');
     }
   };
 
@@ -95,6 +137,7 @@ export default function App() {
     setUser(null);
     setToken('');
     setScreen('login');
+    setSelectedExerciseId(null);
   };
 
   const handleStartWorkout = (routine: any) => {
@@ -125,6 +168,7 @@ export default function App() {
   };
 
   const handleNavigate = (targetScreen: string) => {
+    setSelectedExerciseId(null);
     setScreen(targetScreen as Screen);
   };
 
@@ -264,6 +308,66 @@ export default function App() {
           onNavigate={handleNavigate}
         />
       </>
+    );
+  }
+
+  if (screen === 'pt-settings') {
+    return (
+      <>
+        <PTSettings
+          user={user}
+          onViewAccount={() => setScreen('pt-settings-details')}
+          onViewExercises={() => setScreen('pt-settings-exercises')}
+          onLogout={handleLogout}
+        />
+        <BottomNav
+          role="pt"
+          activeScreen={screen}
+          onNavigate={handleNavigate}
+        />
+      </>
+    );
+  }
+
+  if (screen === 'pt-settings-details') {
+    return (
+      <PTAccountDetails
+        token={token}
+        onBack={() => setScreen('pt-settings')}
+        onProfileUpdated={(profile) => {
+          setUser((current: any) => ({ ...current, ...profile }));
+        }}
+      />
+    );
+  }
+
+  if (screen === 'pt-settings-exercises') {
+    return (
+      <PTExerciseLibrary
+        token={token}
+        onBack={() => setScreen('pt-settings')}
+        onSelectExercise={(exerciseId) => {
+          setSelectedExerciseId(exerciseId);
+          setScreen('pt-settings-exercise-detail');
+        }}
+      />
+    );
+  }
+
+  if (screen === 'pt-settings-exercise-detail') {
+    if (!selectedExerciseId) {
+      setScreen('pt-settings-exercises');
+      return null;
+    }
+
+    return (
+      <PTExerciseDetail
+        token={token}
+        exerciseId={selectedExerciseId}
+        onBack={() => {
+          setScreen('pt-settings-exercises');
+        }}
+      />
     );
   }
 

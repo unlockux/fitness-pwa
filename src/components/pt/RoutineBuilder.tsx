@@ -66,6 +66,7 @@ export function RoutineBuilder({
   const [suggestions, setSuggestions] = useState<ExerciseSuggestion[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [showSuggestions, setShowSuggestions] = useState(false);
+  const [recentExercises, setRecentExercises] = useState<ExerciseSuggestion[]>([]);
 
   const suggestionAbortRef = useRef<AbortController | null>(null);
   const suggestionBlurTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -75,9 +76,24 @@ export function RoutineBuilder({
     fetchClients();
   }, [token]);
 
+  useEffect(() => {
+    setRecentExercises(readRecentExercises());
+  }, []);
+
   const loadSuggestions = useCallback(
     async (query: string) => {
       if (!token) return;
+
+      const trimmed = query.trim();
+      if (!trimmed || trimmed.length < 2) {
+        if (suggestionAbortRef.current) {
+          suggestionAbortRef.current.abort();
+          suggestionAbortRef.current = null;
+        }
+        setSuggestions([]);
+        setIsSearching(false);
+        return;
+      }
 
       if (suggestionAbortRef.current) {
         suggestionAbortRef.current.abort();
@@ -89,9 +105,7 @@ export function RoutineBuilder({
 
       try {
         const params = new URLSearchParams();
-        if (query.trim()) {
-          params.set("query", query.trim());
-        }
+        params.set("query", trimmed);
         params.set("limit", "8");
 
         const response = await fetch(
@@ -323,18 +337,27 @@ export function RoutineBuilder({
       clearTimeout(suggestionBlurTimeout.current);
       suggestionBlurTimeout.current = null;
     }
+    const parsedDefaults = suggestion.instructionNotes
+      ? parsePrescriptionFromNotes(suggestion.instructionNotes)
+      : { reps: undefined, rest: undefined };
+
     addExercise({
       name: suggestion.name,
-      numSets: 3,
-      defaultReps: "10",
+      numSets: 1,
+      defaultReps: parsedDefaults.reps ?? "10",
       defaultRest:
         suggestion.defaultRestSeconds != null
           ? String(suggestion.defaultRestSeconds)
-          : "90",
+          : parsedDefaults.rest ?? "90",
       catalogId: suggestion.id,
       notes: suggestion.instructionNotes ?? "",
       defaultRestSeconds: suggestion.defaultRestSeconds ?? undefined,
     });
+
+    const updatedRecent = [suggestion, ...recentExercises.filter((item) => item.id !== suggestion.id)].slice(0, 3);
+    setRecentExercises(updatedRecent);
+    writeRecentExercises(updatedRecent);
+
     setSmartInput("");
     setShowSuggestions(false);
     setTimeout(() => {
@@ -592,11 +615,10 @@ export function RoutineBuilder({
           <Label
             htmlFor="smartInput"
             className="flex items-center gap-2"
-          >
-            <Mic className="w-4 h-4 text-accent" />
+          > 
             Smart Add Exercise
           </Label>
-          <div className="flex gap-2 mt-2">
+          <div className="flex gap-2 mt-2 mb-4">
             <Input
               id="smartInput"
               ref={smartInputRef}
@@ -620,7 +642,7 @@ export function RoutineBuilder({
                   setShowSuggestions(false);
                 }, 120);
               }}
-              placeholder="Try: Bench Press 3 sets 10 reps 90 sec"
+              placeholder="Exercise title"
               className="flex-1"
             />
             <Button
@@ -630,19 +652,34 @@ export function RoutineBuilder({
               <Plus className="w-4 h-4" />
             </Button>
           </div>
-          <p className="text-xs text-muted-foreground mt-2">
-            Type or speak to add exercises quickly
-          </p>
+          
           {showSuggestions && (
             <div className="mt-3 border border-border rounded-lg bg-background shadow-sm overflow-hidden">
-              {isSearching ? (
-                <div className="px-3 py-3 text-sm text-muted-foreground">
-                  Searching...
-                </div>
-              ) : suggestions.length > 0 ? (
-                suggestions.map((suggestion) => (
+              {(() => {
+                const trimmedQuery = smartInput.trim();
+                const displayedSuggestions = trimmedQuery.length >= 2 ? suggestions : recentExercises;
+
+                if (trimmedQuery.length >= 2 && isSearching) {
+                  return (
+                    <div className="px-3 py-3 text-sm text-muted-foreground">
+                      Searching...
+                    </div>
+                  );
+                }
+
+                if (!displayedSuggestions.length) {
+                  return (
+                    <div className="px-3 py-3 text-xs text-muted-foreground">
+                      {trimmedQuery.length >= 2
+                        ? "No matches found. Press enter to add this as a new exercise."
+                        : "Recent exercises will appear here once you add them."}
+                    </div>
+                  );
+                }
+
+                return displayedSuggestions.map((suggestion) => (
                   <button
-                    key={suggestion.id}
+                    key={`${suggestion.id}-${suggestion.name}`}
                     type="button"
                     onMouseDown={(e) => {
                       e.preventDefault();
@@ -658,22 +695,15 @@ export function RoutineBuilder({
                         </span>
                       )}
                     </div>
-                    {(suggestion.primaryMuscleGroup ||
-                      suggestion.equipmentRequired) && (
+                    {(suggestion.primaryMuscleGroup || suggestion.equipmentRequired) && (
                       <p className="text-xs text-muted-foreground mt-1">
                         {suggestion.primaryMuscleGroup || "—"}
-                        {suggestion.equipmentRequired
-                          ? ` · ${suggestion.equipmentRequired}`
-                          : ""}
+                        {suggestion.equipmentRequired ? ` · ${suggestion.equipmentRequired}` : ""}
                       </p>
                     )}
                   </button>
-                ))
-              ) : (
-                <div className="px-3 py-3 text-xs text-muted-foreground">
-                  No matches found. Press enter to add this as a new exercise.
-                </div>
-              )}
+                ));
+              })()}
             </div>
           )}
         </motion.div>
@@ -877,3 +907,38 @@ export function RoutineBuilder({
     </div>
   );
 }
+
+const parsePrescriptionFromNotes = (notes: string | null | undefined) => {
+  if (!notes) return { reps: undefined as string | undefined, rest: undefined as string | undefined };
+
+  const repsMatch = notes.match(/\b(\d{1,3})(?:-\d{1,3})?\s*(?:reps|rep)/i);
+  const restMatch = notes.match(/(\d{1,3})\s*(?:sec|seconds)/i);
+
+  return {
+    reps: repsMatch ? repsMatch[1] : undefined,
+    rest: restMatch ? restMatch[1] : undefined,
+  };
+};
+
+const SMART_INPUT_DEBOUNCE = 300;
+const RECENT_STORAGE_KEY = "routineBuilder:recentExercises";
+
+const readRecentExercises = (): ExerciseSuggestion[] => {
+  try {
+    if (typeof window === "undefined") return [];
+    const raw = localStorage.getItem(RECENT_STORAGE_KEY);
+    return raw ? (JSON.parse(raw) as ExerciseSuggestion[]) : [];
+  } catch (error) {
+    console.error("Failed to read recent exercises", error);
+    return [];
+  }
+};
+
+const writeRecentExercises = (items: ExerciseSuggestion[]) => {
+  try {
+    if (typeof window === "undefined") return;
+    localStorage.setItem(RECENT_STORAGE_KEY, JSON.stringify(items.slice(0, 3)));
+  } catch (error) {
+    console.error("Failed to persist recent exercises", error);
+  }
+};

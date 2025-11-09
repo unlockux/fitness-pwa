@@ -1,5 +1,5 @@
 import React from 'react';
-import { Home, Bell, Calendar, Users, TrendingUp } from 'lucide-react';
+import { Home, Bell, Calendar, Users, TrendingUp, Settings } from 'lucide-react';
 import { motion } from 'motion/react';
 
 interface BottomNavProps {
@@ -13,6 +13,7 @@ export function BottomNav({ role, activeScreen, onNavigate }: BottomNavProps) {
     { id: 'pt-dashboard', label: 'Home', icon: Home },
     { id: 'pt-activity', label: 'Activity', icon: Bell },
     { id: 'pt-calendar', label: 'Calendar', icon: Calendar },
+    { id: 'pt-settings', label: 'Settings', icon: Settings },
   ];
 
   const clientNavItems = [

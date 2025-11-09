@@ -6,7 +6,6 @@ import { Input } from '../ui/input';
 import { Label } from '../ui/label';
 import { supabase } from '../../utils/supabase/client';
 import { projectId } from '../../utils/supabase/info';
-import { DemoSetup } from '../DemoSetup';
 
 interface LoginProps {
   onLogin: (user: any, token: string) => void;
@@ -137,7 +136,6 @@ export function Login({ onLogin, onSignup }: LoginProps) {
         </div>
       </motion.div>
       
-      <DemoSetup />
     </div>
   );
 }

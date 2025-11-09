@@ -74,7 +74,10 @@ export function AddHealthLogDialog({ token, client, onClose, onSuccess }: AddHea
 
         const data = await response.json();
         if (isMounted) {
-          setLogs(data.logs || []);
+          const sorted = (data.logs || []).sort(
+            (a: HealthLog, b: HealthLog) => new Date(b.logged_at).getTime() - new Date(a.logged_at).getTime(),
+          );
+          setLogs(sorted);
         }
       } catch (err) {
         console.error("Error fetching health logs:", err);
@@ -136,7 +139,12 @@ export function AddHealthLogDialog({ token, client, onClose, onSuccess }: AddHea
       }
 
       const data = await response.json();
-      setLogs((prev) => [data.log, ...prev]);
+      setLogs((prev) => {
+        const updated = [data.log, ...prev];
+        return updated.sort(
+          (a: HealthLog, b: HealthLog) => new Date(b.logged_at).getTime() - new Date(a.logged_at).getTime(),
+        );
+      });
       resetForm();
       onSuccess();
     } catch (err) {

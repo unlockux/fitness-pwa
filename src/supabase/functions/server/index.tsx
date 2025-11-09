@@ -212,102 +212,96 @@ const DEFAULT_EXERCISES = [
     primaryMuscleGroup: "Legs",
     equipmentRequired: "Barbell",
     defaultRestSeconds: 180,
-    instructionNotes: "Keep chest up, drive knees out, and descend until thighs are at least parallel to the floor.",
+    instructionNotes:
+      "Keep chest up, drive knees out, and descend until thighs are at least parallel to the floor.",
   },
   {
     name: "Romanian Deadlift",
     primaryMuscleGroup: "Hamstrings",
     equipmentRequired: "Barbell",
     defaultRestSeconds: 150,
-    instructionNotes: "Hinge from the hips, keep slight knee bend, and maintain a neutral spine throughout the rep.",
+    instructionNotes:
+      "Hinge from the hips, keep slight knee bend, and maintain a neutral spine throughout the rep.",
   },
   {
     name: "Bench Press",
     primaryMuscleGroup: "Chest",
     equipmentRequired: "Barbell",
     defaultRestSeconds: 150,
-    instructionNotes: "Grip the bar slightly wider than shoulder width, lower with control, and drive evenly through both arms.",
+    instructionNotes:
+      "Grip the bar slightly wider than shoulder width, lower with control, and drive evenly through both arms.",
   },
   {
     name: "Incline Dumbbell Press",
     primaryMuscleGroup: "Chest",
     equipmentRequired: "Dumbbells",
     defaultRestSeconds: 120,
-    instructionNotes: "Set bench to 30–45°, press dumbbells up and together while keeping shoulders packed.",
+    instructionNotes:
+      "Set bench to 30–45°, press dumbbells up and together while keeping shoulders packed.",
   },
   {
     name: "Seated Cable Row",
     primaryMuscleGroup: "Back",
     equipmentRequired: "Cable Machine",
     defaultRestSeconds: 90,
-    instructionNotes: "Sit tall, pull handle towards ribcage, squeeze shoulder blades together at the finish.",
+    instructionNotes:
+      "Sit tall, pull handle towards ribcage, squeeze shoulder blades together at the finish.",
   },
   {
     name: "Lat Pulldown",
     primaryMuscleGroup: "Back",
     equipmentRequired: "Cable Machine",
     defaultRestSeconds: 90,
-    instructionNotes: "Pull bar to upper chest while driving elbows down and keeping torso slightly leaned back.",
+    instructionNotes:
+      "Pull bar to upper chest while driving elbows down and keeping torso slightly leaned back.",
   },
   {
     name: "Dumbbell Shoulder Press",
     primaryMuscleGroup: "Shoulders",
     equipmentRequired: "Dumbbells",
     defaultRestSeconds: 120,
-    instructionNotes: "Keep wrists stacked over elbows, press overhead without arching lower back.",
+    instructionNotes:
+      "Keep wrists stacked over elbows, press overhead without arching lower back.",
   },
   {
     name: "Walking Lunge",
     primaryMuscleGroup: "Legs",
     equipmentRequired: "Bodyweight or Dumbbells",
     defaultRestSeconds: 90,
-    instructionNotes: "Step forward, lower until back knee nearly taps the ground, push through front heel to stand.",
+    instructionNotes:
+      "Step forward, lower until back knee nearly taps the ground, push through front heel to stand.",
   },
   {
     name: "Cable Rope Triceps Extension",
     primaryMuscleGroup: "Triceps",
     equipmentRequired: "Cable Machine",
     defaultRestSeconds: 75,
-    instructionNotes: "Keep elbows tucked, extend rope down and apart until elbows are fully straight.",
+    instructionNotes:
+      "Keep elbows tucked, extend rope down and apart until elbows are fully straight.",
   },
   {
     name: "EZ-Bar Curl",
     primaryMuscleGroup: "Biceps",
     equipmentRequired: "EZ-Bar",
     defaultRestSeconds: 75,
-    instructionNotes: "Curl the bar while keeping elbows pinned to your sides, lower with control to full extension.",
+    instructionNotes:
+      "Curl the bar while keeping elbows pinned to your sides, lower with control to full extension.",
   },
 ];
 
 async function ensureExerciseCatalogSeed(ptId: string) {
   try {
-    const { data, error } = await supabase
-      .from("exercises_catalog")
-      .select("id")
-      .eq("pt_id", ptId)
-      .limit(1);
+    const response = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-d58ce8ef/internal/seed-exercises`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+      },
+      body: JSON.stringify({ ptId }),
+    });
 
-    if (error) {
-      console.error("Seed exercise lookup error", error);
-      return;
-    }
-
-    if (data && data.length > 0) {
-      return;
-    }
-
-    const payload = DEFAULT_EXERCISES.map((exercise) => ({
-      pt_id: ptId,
-      name: exercise.name,
-      primary_muscle_group: exercise.primaryMuscleGroup,
-      equipment_required: exercise.equipmentRequired,
-      default_rest_seconds: exercise.defaultRestSeconds,
-      instruction_notes: exercise.instructionNotes,
-    }));
-
-    const { error: insertError } = await supabase.from("exercises_catalog").insert(payload);
-    if (insertError) {
-      console.error("Seed exercises insert error", insertError);
+    if (!response.ok) {
+      console.error("Seed exercises error:", await response.text());
     }
   } catch (seedError) {
     console.error("Seed exercises unexpected error", seedError);
@@ -862,7 +856,7 @@ app.get("/make-server-d58ce8ef/pt/dashboard", async (c) => {
         const firstName = clientProfile.first_name ?? nameParts.firstName;
         const lastName = clientProfile.last_name ?? nameParts.lastName;
         const displayName = [firstName, lastName].filter(Boolean).join(" ") || nameParts.fullName;
-
+        
         return {
           id: clientProfile.id,
           name: displayName,
@@ -1281,6 +1275,120 @@ app.post("/make-server-d58ce8ef/pt/calendar", async (c) => {
   }
 });
 
+app.patch("/make-server-d58ce8ef/pt/calendar/:eventId", async (c) => {
+  const context = await extractAuthContext(c);
+  if (context.error) {
+    return c.json({ error: context.error.message }, context.error.status);
+  }
+
+  const { profile } = context;
+  if (profile.role !== "pt") {
+    return c.json({ error: "Forbidden" }, 403);
+  }
+
+  const eventId = c.req.param("eventId");
+  if (!eventId) {
+    return c.json({ error: "Event ID is required" }, 400);
+  }
+
+  const { data: existing, error: existingError } = await supabase
+    .from("pt_calendar_events")
+    .select("id, pt_id")
+    .eq("id", eventId)
+    .maybeSingle();
+
+  if (existingError || !existing || existing.pt_id !== profile.id) {
+    return c.json({ error: "Event not found" }, 404);
+  }
+
+  try {
+    const body = await c.req.json();
+    const payload: Record<string, any> = {
+      title: body.title,
+      event_type: body.type,
+      start_at: body.startDate,
+      end_at: body.endDate,
+      notes: body.notes ?? null,
+      client_id: body.clientId ?? null,
+      location: body.location ?? null,
+      recurrence_rrule: body.recurrenceRule ?? null,
+      is_all_day: body.isAllDay ?? false,
+      updated_at: new Date().toISOString(),
+    };
+
+    const { data, error } = await supabase
+      .from("pt_calendar_events")
+      .update(payload)
+      .eq("id", eventId)
+      .eq("pt_id", profile.id)
+      .select("*")
+      .single();
+
+    if (error || !data) {
+      console.error("Update calendar event error", error);
+      return c.json({ error: "Failed to update event" }, 500);
+    }
+
+    return c.json({
+      event: {
+        id: data.id,
+        title: data.title,
+        type: data.event_type,
+        startDate: data.start_at,
+        endDate: data.end_at,
+        clientId: data.client_id,
+        recurrenceRule: data.recurrence_rrule,
+        isAllDay: data.is_all_day,
+        location: data.location,
+        notes: data.notes,
+      },
+    });
+  } catch (error) {
+    console.error("Update calendar event exception", error);
+    return c.json({ error: "Failed to update event" }, 500);
+  }
+});
+
+app.delete("/make-server-d58ce8ef/pt/calendar/:eventId", async (c) => {
+  const context = await extractAuthContext(c);
+  if (context.error) {
+    return c.json({ error: context.error.message }, context.error.status);
+  }
+
+  const { profile } = context;
+  if (profile.role !== "pt") {
+    return c.json({ error: "Forbidden" }, 403);
+  }
+
+  const eventId = c.req.param("eventId");
+  if (!eventId) {
+    return c.json({ error: "Event ID is required" }, 400);
+  }
+
+  const { data: existing, error: existingError } = await supabase
+    .from("pt_calendar_events")
+    .select("id, pt_id")
+    .eq("id", eventId)
+    .maybeSingle();
+
+  if (existingError || !existing || existing.pt_id !== profile.id) {
+    return c.json({ error: "Event not found" }, 404);
+  }
+
+  const { error } = await supabase
+    .from("pt_calendar_events")
+    .delete()
+    .eq("id", eventId)
+    .eq("pt_id", profile.id);
+
+  if (error) {
+    console.error("Delete calendar event error", error);
+    return c.json({ error: "Failed to delete event" }, 500);
+  }
+
+  return c.json({ success: true });
+});
+
 app.post("/make-server-d58ce8ef/pt/create-client", async (c) => {
   const context = await extractAuthContext(c);
   if (context.error) {
@@ -1347,7 +1455,7 @@ app.post("/make-server-d58ce8ef/pt/create-client", async (c) => {
       clientId: authData.user.id,
     });
 
-    return c.json({
+    return c.json({ 
       client: {
         id: authData.user.id,
         name: nameParts.fullName,
@@ -1554,7 +1662,7 @@ app.get("/make-server-d58ce8ef/pt/exercises", async (c) => {
   const searchQuery = c.req.query("query") ?? c.req.query("q") ?? "";
   const limitParam = c.req.query("limit");
   const parsedLimit = Number.parseInt(limitParam ?? "", 10);
-  const limit = Number.isNaN(parsedLimit) ? 10 : Math.min(Math.max(parsedLimit, 1), 25);
+  const limit = Number.isNaN(parsedLimit) ? 10 : Math.min(Math.max(parsedLimit, 1), 100);
 
   const { data, error } = await supabase.rpc("search_pt_exercises", {
     pt_uuid: profile.id,
@@ -1579,6 +1687,136 @@ app.get("/make-server-d58ce8ef/pt/exercises", async (c) => {
   }));
 
   return c.json({ exercises });
+});
+
+app.get("/make-server-d58ce8ef/pt/exercises/:exerciseId", async (c) => {
+  const context = await extractAuthContext(c);
+  if (context.error) {
+    return c.json({ error: context.error.message }, context.error.status);
+  }
+
+  const { profile } = context;
+  if (profile.role !== "pt") {
+    return c.json({ error: "Forbidden" }, 403);
+  }
+
+  const exerciseId = c.req.param("exerciseId");
+
+  const { data, error } = await supabase
+    .from("exercises_catalog")
+    .select(
+      "id, name, primary_muscle_group, equipment_required, default_rest_seconds, instruction_notes, video_link"
+    )
+    .eq("id", exerciseId)
+    .eq("pt_id", profile.id)
+    .maybeSingle();
+
+  if (error || !data) {
+    console.error("Fetch exercise detail error", error);
+    return c.json({ error: "Exercise not found" }, 404);
+  }
+
+    return c.json({ 
+    exercise: {
+      id: data.id,
+      name: data.name,
+      primaryMuscleGroup: data.primary_muscle_group,
+      equipmentRequired: data.equipment_required,
+      defaultRestSeconds: data.default_rest_seconds,
+      instructionNotes: data.instruction_notes,
+      videoLink: data.video_link,
+    },
+  });
+});
+
+app.patch("/make-server-d58ce8ef/pt/exercises/:exerciseId", async (c) => {
+  const context = await extractAuthContext(c);
+  if (context.error) {
+    return c.json({ error: context.error.message }, context.error.status);
+  }
+
+  const { profile } = context;
+  if (profile.role !== "pt") {
+    return c.json({ error: "Forbidden" }, 403);
+  }
+
+  const exerciseId = c.req.param("exerciseId");
+
+  const { data: existing, error: existingError } = await supabase
+    .from("exercises_catalog")
+    .select("id")
+    .eq("id", exerciseId)
+    .eq("pt_id", profile.id)
+    .maybeSingle();
+
+  if (existingError || !existing) {
+    return c.json({ error: "Exercise not found" }, 404);
+  }
+
+  try {
+    const body = await c.req.json();
+
+    const updates: Record<string, any> = {};
+    if (body.name !== undefined) {
+      updates.name = body.name ? String(body.name).trim() : null;
+    }
+    if (body.primaryMuscleGroup !== undefined) {
+      updates.primary_muscle_group = body.primaryMuscleGroup ? String(body.primaryMuscleGroup).trim() : null;
+    }
+    if (body.equipmentRequired !== undefined) {
+      updates.equipment_required = body.equipmentRequired ? String(body.equipmentRequired).trim() : null;
+    }
+    if (body.defaultRestSeconds !== undefined) {
+      const rest = body.defaultRestSeconds === null || body.defaultRestSeconds === ""
+        ? null
+        : Number(body.defaultRestSeconds);
+
+      if (rest != null && (Number.isNaN(rest) || rest < 0 || rest > 600)) {
+        return c.json({ error: "Default rest must be between 0 and 600 seconds." }, 400);
+      }
+      updates.default_rest_seconds = rest;
+    }
+    if (body.instructionNotes !== undefined) {
+      updates.instruction_notes = body.instructionNotes ? String(body.instructionNotes) : null;
+    }
+    if (body.videoLink !== undefined) {
+      updates.video_link = body.videoLink ? String(body.videoLink).trim() : null;
+    }
+
+    if (Object.keys(updates).length === 0) {
+      return c.json({ error: "No updates provided" }, 400);
+    }
+
+    const { data, error } = await supabase
+      .from("exercises_catalog")
+      .update(updates)
+      .eq("id", exerciseId)
+      .eq("pt_id", profile.id)
+      .select(
+        "id, name, primary_muscle_group, equipment_required, default_rest_seconds, instruction_notes, video_link"
+      )
+      .single();
+
+    if (error || !data) {
+      console.error("Update exercise error", error);
+      return c.json({ error: "Failed to update exercise" }, 500);
+    }
+
+    return c.json({
+      exercise: {
+        id: data.id,
+        name: data.name,
+        primaryMuscleGroup: data.primary_muscle_group,
+        equipmentRequired: data.equipment_required,
+        defaultRestSeconds: data.default_rest_seconds,
+        instructionNotes: data.instruction_notes,
+        videoLink: data.video_link,
+      },
+    });
+  } catch (error) {
+    console.error("Exercise update exception", error);
+    return c.json({ error: "Failed to update exercise" }, 500);
+  }
 });
 
 app.get("/make-server-d58ce8ef/pt/notifications", async (c) => {
@@ -1656,9 +1894,9 @@ app.post("/make-server-d58ce8ef/pt/notifications/:notificationId/read", async (c
   const { profile } = context;
   if (profile.role !== "pt") {
     return c.json({ error: "Forbidden" }, 403);
-  }
+    }
 
-  const notificationId = c.req.param("notificationId");
+    const notificationId = c.req.param("notificationId");
   const { error } = await supabase
     .from("notifications")
     .update({ is_read: true })
@@ -1670,7 +1908,7 @@ app.post("/make-server-d58ce8ef/pt/notifications/:notificationId/read", async (c
     return c.json({ error: "Failed to update notification" }, 500);
   }
 
-  return c.json({ success: true });
+    return c.json({ success: true });
 });
 
 app.post("/make-server-d58ce8ef/pt/notifications/read-all", async (c) => {
@@ -1741,9 +1979,9 @@ app.post("/make-server-d58ce8ef/client/notifications/:notificationId/read", asyn
   const { profile } = context;
   if (profile.role !== "client") {
     return c.json({ error: "Forbidden" }, 403);
-  }
+    }
 
-  const notificationId = c.req.param("notificationId");
+    const notificationId = c.req.param("notificationId");
   const { error } = await supabase
     .from("notifications")
     .update({ is_read: true })
@@ -1755,7 +1993,7 @@ app.post("/make-server-d58ce8ef/client/notifications/:notificationId/read", asyn
     return c.json({ error: "Failed to update notification" }, 500);
   }
 
-  return c.json({ success: true });
+    return c.json({ success: true });
 });
 
 app.post("/make-server-d58ce8ef/client/notifications/read-all", async (c) => {
@@ -1826,7 +2064,7 @@ app.post("/make-server-d58ce8ef/pt/reset-client-password", async (c) => {
       .eq("id", clientId)
       .maybeSingle();
 
-    return c.json({
+    return c.json({ 
       success: true,
       credentials: {
         email: clientProfile?.email ?? "",
@@ -1836,6 +2074,139 @@ app.post("/make-server-d58ce8ef/pt/reset-client-password", async (c) => {
   } catch (error) {
     console.error("Reset password exception", error);
     return c.json({ error: "Server error resetting password" }, 500);
+  }
+});
+
+app.get("/make-server-d58ce8ef/pt/profile", async (c) => {
+  const context = await extractAuthContext(c);
+  if (context.error) {
+    return c.json({ error: context.error.message }, context.error.status);
+  }
+
+  const { profile, authUser } = context;
+  if (profile.role !== "pt") {
+    return c.json({ error: "Forbidden" }, 403);
+  }
+
+  return c.json({
+    profile: {
+      id: profile.id,
+      email: profile.email ?? authUser.email ?? null,
+      firstName: profile.first_name ?? null,
+      lastName: profile.last_name ?? null,
+      fullName: profile.full_name ?? [profile.first_name, profile.last_name].filter(Boolean).join(" "),
+      motivationStyle: profile.motivation_style ?? null,
+      trainingFrequencyGoal: profile.training_frequency_goal ?? null,
+      prefersMetricUnits: Boolean(profile.prefers_metric_units),
+    },
+  });
+});
+
+app.patch("/make-server-d58ce8ef/pt/profile", async (c) => {
+  const context = await extractAuthContext(c);
+  if (context.error) {
+    return c.json({ error: context.error.message }, context.error.status);
+  }
+
+  const { profile } = context;
+  if (profile.role !== "pt") {
+    return c.json({ error: "Forbidden" }, 403);
+  }
+
+  try {
+    const body = await c.req.json();
+    const firstName = typeof body.firstName === "string" ? body.firstName.trim() : undefined;
+    const lastName = typeof body.lastName === "string" ? body.lastName.trim() : undefined;
+    const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : undefined;
+    const motivationStyle = typeof body.motivationStyle === "string" ? body.motivationStyle.trim() : undefined;
+    const trainingFrequencyGoal = body.trainingFrequencyGoal;
+    const prefersMetricUnits = typeof body.prefersMetricUnits === "boolean" ? body.prefersMetricUnits : undefined;
+
+    if (trainingFrequencyGoal != null) {
+      if (Number.isNaN(Number(trainingFrequencyGoal)) || trainingFrequencyGoal < 1 || trainingFrequencyGoal > 14) {
+        return c.json({ error: "Training frequency goal must be between 1 and 14 sessions per week." }, 400);
+      }
+    }
+
+    const updatedFirstName = firstName != null ? firstName : profile.first_name ?? "";
+    const updatedLastName = lastName != null ? lastName : profile.last_name ?? "";
+    const fullName =
+      [updatedFirstName, updatedLastName].filter(Boolean).join(" ") ||
+      (email ?? profile.email ?? profile.full_name);
+
+    const profileUpdates: Record<string, any> = {
+      full_name: fullName,
+      first_name: updatedFirstName || null,
+      last_name: updatedLastName || null,
+    };
+
+    if (motivationStyle !== undefined) {
+      profileUpdates.motivation_style = motivationStyle || null;
+    }
+
+    if (trainingFrequencyGoal !== undefined) {
+      profileUpdates.training_frequency_goal = trainingFrequencyGoal ?? null;
+    }
+
+    if (prefersMetricUnits !== undefined) {
+      profileUpdates.prefers_metric_units = prefersMetricUnits;
+    }
+
+    if (email) {
+      profileUpdates.email = email;
+    }
+
+    const { error: profileError } = await supabase
+      .from("profiles")
+      .update(profileUpdates)
+      .eq("id", profile.id);
+
+    if (profileError) {
+      console.error("Update PT profile error", profileError);
+      return c.json({ error: "Failed to update PT profile" }, 500);
+    }
+
+    if (email && email !== (profile.email ?? "")) {
+      const { error: authError } = await supabase.auth.admin.updateUserById(profile.id, {
+        email,
+        user_metadata: {
+          name: fullName,
+          role: profile.role,
+        },
+      });
+
+      if (authError) {
+        console.error("Update PT auth email error", authError);
+        return c.json({ error: authError.message || "Failed to update PT email" }, 500);
+      }
+    }
+
+    const { data: refreshedProfile, error: refreshedError } = await supabase
+      .from("profiles")
+      .select("id, email, first_name, last_name, full_name, motivation_style, training_frequency_goal, prefers_metric_units")
+      .eq("id", profile.id)
+      .maybeSingle();
+
+    if (refreshedError || !refreshedProfile) {
+      console.error("Reload PT profile error", refreshedError);
+      return c.json({ error: "Failed to reload PT profile" }, 500);
+    }
+
+    return c.json({
+      profile: {
+        id: refreshedProfile.id,
+        email: refreshedProfile.email,
+        firstName: refreshedProfile.first_name,
+        lastName: refreshedProfile.last_name,
+        fullName: refreshedProfile.full_name,
+        motivationStyle: refreshedProfile.motivation_style,
+        trainingFrequencyGoal: refreshedProfile.training_frequency_goal,
+        prefersMetricUnits: Boolean(refreshedProfile.prefers_metric_units),
+      },
+    });
+  } catch (error) {
+    console.error("PT profile update exception", error);
+    return c.json({ error: "Failed to update PT profile" }, 500);
   }
 });
 

@@ -44,6 +44,11 @@ export function AddClientDialog({ token, onClose, onSuccess }: AddClientDialogPr
         }
       );
 
+      if (response.status === 401) {
+        setError('Your session has expired. Please sign out and log in again.');
+        return;
+      }
+
       if (response.ok) {
         const data = await response.json();
         setCredentials(data.credentials);

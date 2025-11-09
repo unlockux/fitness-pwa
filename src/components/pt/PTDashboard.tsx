@@ -25,8 +25,11 @@ export function PTDashboard({ user, token, onCreateRoutine, onEditRoutine, onVie
   const [healthLogClient, setHealthLogClient] = useState<{ id: string; name: string } | null>(null);
 
   useEffect(() => {
+    if (!token) {
+      return;
+    }
     fetchDashboardData();
-  }, []);
+  }, [token]);
 
   const fetchDashboardData = async () => {
     setLoading(true);
@@ -39,6 +42,12 @@ export function PTDashboard({ user, token, onCreateRoutine, onEditRoutine, onVie
           },
         }
       );
+
+      if (response.status === 401) {
+        console.warn('PT dashboard request returned 401. Please sign in again.');
+        setData(null);
+        return;
+      }
 
       if (response.ok) {
         const dashboardData = await response.json();
