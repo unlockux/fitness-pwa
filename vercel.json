@@ -2,5 +2,9 @@
   "buildCommand": "npm run build",
   "installCommand": "npm install",
   "outputDirectory": "dist",
-  "framework": "vite"
-}
+  "framework": "vite",
+  "env": {
+    "VITE_SUPABASE_PROJECT_ID": "azdnuhjpjzxmxnfcvpkm",
+    "VITE_SUPABASE_ANON_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+  }
+} 
