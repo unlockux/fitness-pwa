@@ -84,7 +84,7 @@ export function ClientDashboard({ user, token, onStartWorkout, onLogout }: Clien
               animate={{ opacity: 1, y: 0 }}
               className="text-primary-foreground mb-1"
             >
-              Hey, {user?.name?.split(' ')[0]}! 👋
+              Hey, {(user?.firstName ?? user?.name ?? '').split(' ')[0]}! 👋
             </motion.h1>
             <p className="text-primary-foreground/80 text-sm">{today}</p>
           </div>

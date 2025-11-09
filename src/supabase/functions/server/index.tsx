@@ -25,6 +25,8 @@ type ProfileRow = {
   id: string;
   role: UserRole;
   full_name: string;
+  first_name: string | null;
+  last_name: string | null;
   email: string;
   motivation_style: string | null;
   training_frequency_goal: number | null;
@@ -113,12 +115,19 @@ async function extractAuthContext(c: any) {
 }
 
 function serializeUser(authUser: User, profile: ProfileRow, extra: Record<string, unknown> = {}) {
+  const derived = splitNameInput(profile.full_name || "");
+  const firstName = profile.first_name ?? derived.firstName;
+  const lastName = profile.last_name ?? derived.lastName;
+  const fullName = [firstName, lastName].filter(Boolean).join(" ") || profile.full_name;
+
   return {
     id: profile.id,
     email: profile.email,
     role: profile.role,
-    name: profile.full_name,
-    full_name: profile.full_name,
+    name: fullName,
+    fullName,
+    firstName,
+    lastName,
     training_frequency_goal: profile.training_frequency_goal,
     current_streak_weeks: profile.current_streak_weeks,
     longest_streak_weeks: profile.longest_streak_weeks,
@@ -180,6 +189,129 @@ function formatRepsFallback(min: number | null, max: number | null): string {
     return String(min);
   }
   return "10";
+}
+
+function normalizeSpaces(value: string) {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function splitNameInput(name: string) {
+  const normalized = normalizeSpaces(name);
+  if (!normalized) {
+    return { fullName: "", firstName: "", lastName: null as string | null };
+  }
+  const parts = normalized.split(" ");
+  const firstName = parts[0];
+  const lastName = parts.length > 1 ? parts.slice(1).join(" ") : null;
+  return { fullName: normalized, firstName, lastName };
+}
+
+const DEFAULT_EXERCISES = [
+  {
+    name: "Barbell Back Squat",
+    primaryMuscleGroup: "Legs",
+    equipmentRequired: "Barbell",
+    defaultRestSeconds: 180,
+    instructionNotes: "Keep chest up, drive knees out, and descend until thighs are at least parallel to the floor.",
+  },
+  {
+    name: "Romanian Deadlift",
+    primaryMuscleGroup: "Hamstrings",
+    equipmentRequired: "Barbell",
+    defaultRestSeconds: 150,
+    instructionNotes: "Hinge from the hips, keep slight knee bend, and maintain a neutral spine throughout the rep.",
+  },
+  {
+    name: "Bench Press",
+    primaryMuscleGroup: "Chest",
+    equipmentRequired: "Barbell",
+    defaultRestSeconds: 150,
+    instructionNotes: "Grip the bar slightly wider than shoulder width, lower with control, and drive evenly through both arms.",
+  },
+  {
+    name: "Incline Dumbbell Press",
+    primaryMuscleGroup: "Chest",
+    equipmentRequired: "Dumbbells",
+    defaultRestSeconds: 120,
+    instructionNotes: "Set bench to 30–45°, press dumbbells up and together while keeping shoulders packed.",
+  },
+  {
+    name: "Seated Cable Row",
+    primaryMuscleGroup: "Back",
+    equipmentRequired: "Cable Machine",
+    defaultRestSeconds: 90,
+    instructionNotes: "Sit tall, pull handle towards ribcage, squeeze shoulder blades together at the finish.",
+  },
+  {
+    name: "Lat Pulldown",
+    primaryMuscleGroup: "Back",
+    equipmentRequired: "Cable Machine",
+    defaultRestSeconds: 90,
+    instructionNotes: "Pull bar to upper chest while driving elbows down and keeping torso slightly leaned back.",
+  },
+  {
+    name: "Dumbbell Shoulder Press",
+    primaryMuscleGroup: "Shoulders",
+    equipmentRequired: "Dumbbells",
+    defaultRestSeconds: 120,
+    instructionNotes: "Keep wrists stacked over elbows, press overhead without arching lower back.",
+  },
+  {
+    name: "Walking Lunge",
+    primaryMuscleGroup: "Legs",
+    equipmentRequired: "Bodyweight or Dumbbells",
+    defaultRestSeconds: 90,
+    instructionNotes: "Step forward, lower until back knee nearly taps the ground, push through front heel to stand.",
+  },
+  {
+    name: "Cable Rope Triceps Extension",
+    primaryMuscleGroup: "Triceps",
+    equipmentRequired: "Cable Machine",
+    defaultRestSeconds: 75,
+    instructionNotes: "Keep elbows tucked, extend rope down and apart until elbows are fully straight.",
+  },
+  {
+    name: "EZ-Bar Curl",
+    primaryMuscleGroup: "Biceps",
+    equipmentRequired: "EZ-Bar",
+    defaultRestSeconds: 75,
+    instructionNotes: "Curl the bar while keeping elbows pinned to your sides, lower with control to full extension.",
+  },
+];
+
+async function ensureExerciseCatalogSeed(ptId: string) {
+  try {
+    const { data, error } = await supabase
+      .from("exercises_catalog")
+      .select("id")
+      .eq("pt_id", ptId)
+      .limit(1);
+
+    if (error) {
+      console.error("Seed exercise lookup error", error);
+      return;
+    }
+
+    if (data && data.length > 0) {
+      return;
+    }
+
+    const payload = DEFAULT_EXERCISES.map((exercise) => ({
+      pt_id: ptId,
+      name: exercise.name,
+      primary_muscle_group: exercise.primaryMuscleGroup,
+      equipment_required: exercise.equipmentRequired,
+      default_rest_seconds: exercise.defaultRestSeconds,
+      instruction_notes: exercise.instructionNotes,
+    }));
+
+    const { error: insertError } = await supabase.from("exercises_catalog").insert(payload);
+    if (insertError) {
+      console.error("Seed exercises insert error", insertError);
+    }
+  } catch (seedError) {
+    console.error("Seed exercises unexpected error", seedError);
+  }
 }
 
 async function fetchClientAssignment(clientId: string) {
@@ -474,11 +606,12 @@ app.post("/make-server-d58ce8ef/auth/signup", async (c) => {
     }
 
     const loweredEmail = String(email).toLowerCase();
+    const nameParts = splitNameInput(String(name));
 
     const { data, error } = await supabase.auth.admin.createUser({
       email: loweredEmail,
       password,
-      user_metadata: { name, role },
+      user_metadata: { name: nameParts.fullName, role },
       email_confirm: true,
     });
 
@@ -490,7 +623,9 @@ app.post("/make-server-d58ce8ef/auth/signup", async (c) => {
     const insertProfile = await supabase.from("profiles").insert({
       id: data.user.id,
       role,
-      full_name: name,
+      full_name: nameParts.fullName,
+      first_name: nameParts.firstName,
+      last_name: nameParts.lastName,
       email: loweredEmail,
       training_frequency_goal: role === "client" ? 3 : null,
     });
@@ -505,7 +640,9 @@ app.post("/make-server-d58ce8ef/auth/signup", async (c) => {
         id: data.user.id,
         email: loweredEmail,
         role,
-        name,
+        name: nameParts.fullName,
+        firstName: nameParts.firstName,
+        lastName: nameParts.lastName,
       },
     });
   } catch (error) {
@@ -661,12 +798,14 @@ app.post("/make-server-d58ce8ef/client/log-workout", async (c) => {
 
     // Notify PT if assigned
     if (ptId) {
+      const clientNameParts = splitNameInput(profile.full_name || "");
+      const notificationName = profile.first_name ?? clientNameParts.firstName ?? clientNameParts.fullName;
       await createNotification({
         userId: ptId,
         type: "client_logged_workout",
         clientId: profile.id,
         title: "Client workout",
-        message: `${profile.full_name} completed a workout`,
+        message: `${notificationName} completed a workout`,
         metadata: { routineId },
       });
     }
@@ -719,9 +858,17 @@ app.get("/make-server-d58ce8ef/pt/dashboard", async (c) => {
     const clients = await Promise.all(
       (clientProfiles || []).map(async (clientProfile: ProfileRow) => {
         const dashboard = await fetchClientDashboard(clientProfile);
+        const nameParts = splitNameInput(clientProfile.full_name || "");
+        const firstName = clientProfile.first_name ?? nameParts.firstName;
+        const lastName = clientProfile.last_name ?? nameParts.lastName;
+        const displayName = [firstName, lastName].filter(Boolean).join(" ") || nameParts.fullName;
+
         return {
           id: clientProfile.id,
-          name: clientProfile.full_name,
+          name: displayName,
+          fullName: displayName,
+          firstName,
+          lastName,
           email: clientProfile.email,
           streak: dashboard.streak,
           weeklyGoal: dashboard.weeklyGoal,
@@ -781,10 +928,16 @@ app.get("/make-server-d58ce8ef/pt/dashboard", async (c) => {
         .map((session: any) => {
           const issue = activeIssueByClient.get(session.client_id)!;
           const clientProfile = clientIdToProfile[session.client_id];
+          const clientNameParts = clientProfile
+            ? splitNameInput(clientProfile.full_name || "")
+            : { firstName: "Client", lastName: null, fullName: "Client" };
+          const alertFirstName = clientProfile?.first_name ?? clientNameParts.firstName;
+          const alertLastName = clientProfile?.last_name ?? clientNameParts.lastName;
+          const alertDisplayName = [alertFirstName, alertLastName].filter(Boolean).join(" ") || clientNameParts.fullName;
           return {
             eventId: session.id,
             clientId: session.client_id,
-            clientName: clientProfile?.full_name ?? "Client",
+            clientName: alertDisplayName,
             sessionStart: session.start_at,
             sessionEnd: session.end_at,
             injuryTitle: issue.injury_title,
@@ -1146,12 +1299,13 @@ app.post("/make-server-d58ce8ef/pt/create-client", async (c) => {
     }
 
     const loweredEmail = String(email).toLowerCase();
+    const nameParts = splitNameInput(String(name));
     const tempPassword = password || `Fitness${Math.random().toString(36).slice(-8)}!`;
 
     const { data: authData, error } = await supabase.auth.admin.createUser({
       email: loweredEmail,
       password: tempPassword,
-      user_metadata: { name, role: "client" },
+      user_metadata: { name: nameParts.fullName, role: "client" },
       email_confirm: true,
     });
 
@@ -1163,7 +1317,9 @@ app.post("/make-server-d58ce8ef/pt/create-client", async (c) => {
     const { error: profileError } = await supabase.from("profiles").insert({
       id: authData.user.id,
       role: "client",
-      full_name: name,
+      full_name: nameParts.fullName,
+      first_name: nameParts.firstName,
+      last_name: nameParts.lastName,
       email: loweredEmail,
       training_frequency_goal: 3,
     });
@@ -1187,14 +1343,16 @@ app.post("/make-server-d58ce8ef/pt/create-client", async (c) => {
       userId: profile.id,
       type: "client_created",
       title: "Client added",
-      message: `${name} has been added as a client`,
+      message: `${nameParts.firstName || nameParts.fullName} has been added as a client`,
       clientId: authData.user.id,
     });
 
     return c.json({
       client: {
         id: authData.user.id,
-        name,
+        name: nameParts.fullName,
+        firstName: nameParts.firstName,
+        lastName: nameParts.lastName,
         email: loweredEmail,
       },
       credentials: {
@@ -1242,7 +1400,13 @@ app.post("/make-server-d58ce8ef/pt/update-client", async (c) => {
 
     if (name || email) {
       const updates: any = {};
-      if (name) updates.full_name = name;
+      let namePartsForUpdate: ReturnType<typeof splitNameInput> | null = null;
+      if (name) {
+        namePartsForUpdate = splitNameInput(String(name));
+        updates.full_name = namePartsForUpdate.fullName;
+        updates.first_name = namePartsForUpdate.firstName;
+        updates.last_name = namePartsForUpdate.lastName;
+      }
       if (email) updates.email = String(email).toLowerCase();
 
       const { error: profileError } = await supabase
@@ -1257,7 +1421,9 @@ app.post("/make-server-d58ce8ef/pt/update-client", async (c) => {
 
       const authUpdates: any = {};
       if (email) authUpdates.email = String(email).toLowerCase();
-      if (name) authUpdates.user_metadata = { name, role: "client" };
+      if (name && namePartsForUpdate) {
+        authUpdates.user_metadata = { name: namePartsForUpdate.fullName, role: "client" };
+      }
 
       if (Object.keys(authUpdates).length) {
         const { error: authError } = await supabase.auth.admin.updateUserById(clientId, authUpdates);
@@ -1383,6 +1549,8 @@ app.get("/make-server-d58ce8ef/pt/exercises", async (c) => {
     return c.json({ error: "Forbidden" }, 403);
   }
 
+  await ensureExerciseCatalogSeed(profile.id);
+
   const searchQuery = c.req.query("query") ?? c.req.query("q") ?? "";
   const limitParam = c.req.query("limit");
   const parsedLimit = Number.parseInt(limitParam ?? "", 10);
@@ -1447,14 +1615,18 @@ let clientNames: Record<string, string> = {};
 if (clientIdSet.size > 0) {
   const { data: clientProfiles, error: profileError } = await supabase
     .from("profiles")
-    .select("id, full_name")
+    .select("id, full_name, first_name, last_name")
     .in("id", Array.from(clientIdSet));
 
   if (profileError) {
     console.error("Notification client lookup error", profileError);
   } else {
     clientNames = (clientProfiles || []).reduce((acc: Record<string, string>, item: any) => {
-      acc[item.id] = item.full_name;
+      const parts = splitNameInput(item.full_name || "");
+      const firstName = item.first_name ?? parts.firstName;
+      const lastName = item.last_name ?? parts.lastName;
+      const displayName = [firstName, lastName].filter(Boolean).join(" ") || parts.fullName;
+      acc[item.id] = displayName;
       return acc;
     }, {});
   }

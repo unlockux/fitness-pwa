@@ -72,7 +72,7 @@ export function PTDashboard({ user, token, onCreateRoutine, onEditRoutine, onVie
         <div className="flex items-center justify-between mb-6">
           <div>
             <h1 className="text-primary-foreground mb-1">PT Dashboard</h1>
-            <p className="text-primary-foreground/80">Welcome back, {user?.name}</p>
+            <p className="text-primary-foreground/80">Welcome back, {user?.firstName ?? user?.name}</p>
           </div>
           <Button
             variant="ghost"
@@ -188,7 +188,7 @@ export function PTDashboard({ user, token, onCreateRoutine, onEditRoutine, onVie
                     <div className="flex items-center gap-3 flex-1">
                       <div className="w-12 h-12 bg-gradient-to-br from-accent to-accent/80 rounded-full flex items-center justify-center">
                         <span className="text-xl text-white">
-                          {client.name?.charAt(0).toUpperCase()}
+                          {(client.firstName ?? client.name ?? '?').charAt(0).toUpperCase()}
                         </span>
                       </div>
                       <div className="flex-1 min-w-0">
